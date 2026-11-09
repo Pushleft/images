@@ -1,0 +1,63 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+env:
+  TRIVY: aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build, scan, push
+        env:
+          ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          sha="${GITHUB_SHA::12}"
+          source_label="org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+          scan() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress "$1"; }
+          tags=()
+          for pair in 18=postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 17=postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24; do
+            major="${pair%%=*}" base="${pair#*=}"
+            plain="ghcr.io/pushleft/postgres:$major-$sha-$ARCH"
+            vector="ghcr.io/pushleft/postgres:$major-pgvector-$sha-$ARCH"
+            docker build --label "$source_label" --build-arg BASE="$base" -f postgres-gosu.Dockerfile -t "$plain" .
+            docker build --label "$source_label" --build-arg BASE="$plain" -f postgres-pgvector.Dockerfile -t "$vector" .
+            scan "$plain"; scan "$vector"
+            tags+=("$plain" "$vector")
+          done
+          clickhouse="ghcr.io/pushleft/clickhouse:$sha-$ARCH"
+          docker build --label "$source_label" -f clickhouse-libssl.Dockerfile -t "$clickhouse" .
+          scan "$clickhouse"
+          tags+=("$clickhouse")
+          for tag in "${tags[@]}"; do docker push "$tag"; done
+  manifest:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Join both architectures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          sha="${GITHUB_SHA::12}"
+          for image in postgres:18-$sha postgres:18-pgvector-$sha postgres:17-$sha postgres:17-pgvector-$sha clickhouse:$sha; do
+            tag="ghcr.io/pushleft/$image"
+            docker buildx imagetools create -t "$tag" "$tag-amd64" "$tag-arm64"
+            digest="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            echo "$tag@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
