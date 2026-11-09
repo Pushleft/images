@@ -28,8 +28,8 @@ LABEL org.opencontainers.image.title="Pushleft PostgreSQL gosu security candidat
       dev.pushleft.gosu.toolchain="go1.27.3"
 RUN gosu --version && test "$(gosu postgres id -u)" = "$(id -u postgres)"
 # Alpine packages whose fixes are newer than the pinned upstream digest
-# (scanned 2026-10-30); only what the scan names, nothing else changes.
-RUN apk upgrade --no-cache brotli-libs libcurl
+# (scanned 2026-11-09); only what the scan names, nothing else changes.
+RUN apk upgrade --no-cache brotli-libs libcurl musl musl-utils zlib
 # Explicitly preserve upstream root bootstrap; see the compensating controls
 # and process-level fixture evidence above. Do not extend this to daemon UIDs.
 # Trivy's matching path-scoped exception is in deploy/security/trivy-exceptions.yaml.

@@ -28,7 +28,8 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           sha="${GITHUB_SHA::12}"
           source_label="org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
-          scan() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress "$1"; }
+          scan() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress "$1" || failed=1; }
+          failed=0
           tags=()
           for pair in 18=postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 17=postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24; do
             major="${pair%%=*}" base="${pair#*=}"
@@ -43,6 +44,7 @@ jobs:
           docker build --label "$source_label" -f clickhouse-libssl.Dockerfile -t "$clickhouse" .
           scan "$clickhouse"
           tags+=("$clickhouse")
+          [ "$failed" = 0 ]
           for tag in "${tags[@]}"; do docker push "$tag"; done
   manifest:
     needs: build
